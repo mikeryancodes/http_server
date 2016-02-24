@@ -1,11 +1,15 @@
 require 'socket'
 require 'time'
 
-# TODO: Needs to be able to handle more complex file operations
-# Need to have a closer look at headers
-
 class HTTPResponse
+  class StatusUndefined < RuntimeError
+  end
+
+  class HeaderFieldClassError < RuntimeError
+  end
+
   attr_accessor :status, :message_body, :headers
+
   VERBAL = {
     200 => "OK",
     400 => "Bad Request",
@@ -28,18 +32,18 @@ class HTTPResponse
 
   def to_s
     raise StatusUndefined if @status.nil?
-    result = "HTTP/1.1 #{@status} #{VERBAL[@status]}\n\r"
+    result = "HTTP/1.1 #{@status} #{VERBAL[@status]}\r\n"
     @headers.each do |k, v|
       if v.class == String
-        result << "#{k}: #{v}\n\r"
+        result << "#{k}: #{v}\r\n"
       elsif v.class == Proc
-        result << "#{k}: #{v.call}\n\r"
+        result << "#{k}: #{v.call}\r\n"
       else
         raise HeaderFieldClassError
       end
     end
     if @message_body.length > 0
-      result << "\n\r"
+      result << "\r\n"
       result << @message_body
     end
     result
@@ -48,6 +52,18 @@ end
 
 class HTTPServer
   BAD_REQUEST = HTTPResponse.new(400)
+  CONTENT_TYPE = Hash.new("application/octet-stream")
+  CONTENT_TYPE["html"] = "text/html"
+  CONTENT_TYPE["htm"] = "text/html"
+  CONTENT_TYPE["shtml"] = "text/html"
+
+  CONTENT_TYPE["rtf"] = "text/richtext"
+  CONTENT_TYPE["txt"] = "text/plain"
+  CONTENT_TYPE["css"] = "text/css"
+
+  CONTENT_TYPE["jpeg"] = "image/jpeg"
+  CONTENT_TYPE["gif"] = "image/gif"
+  CONTENT_TYPE["png"] = "image/png"
 
   def initialize(port = 7777)
     @port = port
@@ -58,7 +74,7 @@ class HTTPServer
       @match_data.nil? ? @response = BAD_REQUEST : self.send(@match_data[1].downcase)
       response_as_string = @response.to_s
       puts response_as_string
-      @client.puts response_as_string
+      @client.print response_as_string
       @client.close
     end
   end
@@ -83,7 +99,11 @@ class HTTPServer
 
   def get_file_contents(method)
     begin
-      file = File.open(".#{@match_data[2]}", "r") do |f|
+      file_name = @match_data[2]
+      file = File.open(".#{file_name}", "rb") do |f|
+        file_name_match_data = file_name.match(/(\/[^\/].+)*\/(([^\/\.]+)\.(.+))/)
+        extension = file_name_match_data[4]
+        @response.headers["Content-Type"] = CONTENT_TYPE[extension]
         @response.status = 200
         if method == :get
           @response.message_body = f.read
